@@ -25,16 +25,19 @@ st.info(
     "Ce système ne remplace pas les inspections terrain."
 )
 
-# ===================== GEE INIT =====================
 import ee
 import json
+import streamlit as st
 
+# ===================== INITIALISATION GEE =====================
 try:
-    # On récupère la clé JSON depuis st.secrets["EE_KEY_JSON"]
+    # Lire la clé directement depuis st.secrets
     ee_key_json = json.loads(st.secrets["EE_KEY_JSON"])
-
+    
+    # Créer les credentials directement à partir du dict
     credentials = ee.ServiceAccountCredentials(
-        ee_key_json["client_email"], ee_key_json
+        ee_key_json["client_email"],
+        ee_key_json  # PAS de chemin de fichier, juste le dict
     )
     ee.Initialize(credentials)
 
