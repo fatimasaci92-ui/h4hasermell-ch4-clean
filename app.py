@@ -307,39 +307,40 @@ display_flares(flares, m)
 
 # ===================== SOURCES D'ÉMISSION =====================
 flare_info = attribute_ch4_source(lat_site, lon_site)
+
 st.markdown(f"### {flare_info['icon']} Attribution de la source")
 st.info(f"{flare_info['source']} — Nombre : {flare_info['n_flares']}")
 
-    st.markdown(f"### {flare_info['icon']} Attribution de la source")
-    st.info(f"{flare_info['source']} — Nombre : {flare_info['n_flares']}")
+flares = flare_info["flares"]
 
-    flares = flare_info["flares"]
+def add_flares_to_map(fc, fmap):
+    def cb(fc_json):
+        features = fc_json["features"]
+        for f in features:
+            lon_f, lat_f = f["geometry"]["coordinates"]
+            folium.Marker(
+                location=[lat_f, lon_f],
+                icon=folium.Icon(color="red", icon="fire"),
+                tooltip="Torche détectée (VIIRS)"
+            ).add_to(fmap)
+        st_folium(fmap, width=750, height=450)
+    fc.evaluate(cb)
 
-    def add_flares_to_map(fc, fmap):
-        def cb(fc_json):
-            features = fc_json["features"]
-            for f in features:
-                lon_f, lat_f = f["geometry"]["coordinates"]
-                folium.Marker(
-                    location=[lat_f, lon_f],
-                    icon=folium.Icon(color="red", icon="fire"),
-                    tooltip="Torche détectée (VIIRS)"
-                ).add_to(fmap)
-            st_folium(fmap, width=750, height=450)
-        fc.evaluate(cb)
+add_flares_to_map(flares, m)
 
-    add_flares_to_map(flares, m)
-
-    # ===================== DÉCISION AUTOMATIQUE =====================
+# ===================== DÉCISION AUTOMATIQUE =====================
+if st.session_state.analysis_done:
+    r = st.session_state.results
     if r["z"] > 2 and flare_info["n_flares"] > 0:
         r["decision"] = "Élévation CH₄ probablement liée aux torches"
     elif r["z"] > 2 and flare_info["n_flares"] == 0:
         r["decision"] = "Élévation CH₄ NON expliquée par les torches – suspicion fuite"
 
-    if st.button("📄 Générer le PDF HSE"):
-        pdf = generate_hse_pdf(r, selected_site, lat_site, lon_site)
-        with open(pdf, "rb") as f:
-            st.download_button("⬇️ Télécharger PDF", f, file_name=os.path.basename(pdf))
+if st.button("📄 Générer le PDF HSE"):
+    pdf = generate_hse_pdf(r, selected_site, lat_site, lon_site)
+    with open(pdf, "rb") as f:
+        st.download_button("⬇️ Télécharger PDF", f, file_name=os.path.basename(pdf))
+
 
 # ===================== HISTORIQUE DES ALERTES =====================
 st.markdown("## 📋 Historique des alertes HSE")
