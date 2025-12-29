@@ -26,9 +26,13 @@ st.info(
 )
 
 # ===================== GEE INIT =====================
+import ee
+import json
+
 try:
     # On récupère la clé JSON depuis st.secrets["EE_KEY_JSON"]
     ee_key_json = json.loads(st.secrets["EE_KEY_JSON"])
+
     credentials = ee.ServiceAccountCredentials(
         ee_key_json["client_email"], ee_key_json
     )
