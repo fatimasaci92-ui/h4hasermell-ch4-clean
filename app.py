@@ -30,9 +30,17 @@ st.info(
 
 # ===================== GEE INIT =====================
 try:
-    key_path = "methane-ai-hse-a85cc13c510a.json"  # JSON local
-    credentials = ee.ServiceAccountCredentials(None, key_file=key_path)
+    ee_key_json = json.loads(st.secrets["EE_KEY_JSON"])
+    with tempfile.NamedTemporaryFile(mode="w+", delete=False) as f:
+        json.dump(ee_key_json, f)
+        key_path = f.name
+
+    credentials = ee.ServiceAccountCredentials(
+        ee_key_json["client_email"], key_path
+    )
     ee.Initialize(credentials)
+    os.remove(key_path)
+
 except Exception as e:
     st.error(f"Erreur Google Earth Engine : {e}")
     st.stop()
@@ -163,7 +171,7 @@ def send_email_alert(to_email, subject, body):
     except Exception as e:
         st.warning(f"Impossible d'envoyer email: {e}")
 
-# ===================== GEE Flares =====================
+# ===================== NOUVELLES FONCTIONS GEE =====================
 def get_active_flares(lat, lon, days_back=7):
     geom = ee.Geometry.Point([lon, lat]).buffer(10000)
     end = ee.Date(datetime.utcnow().strftime("%Y-%m-%d"))
@@ -213,6 +221,16 @@ if st.button("🚀 Lancer l’analyse"):
     if z > 3:
         risk, decision, color = "Critique", "Alerte HSE immédiate", "red"
         log_hse_alert(selected_site, lat_site, lon_site, ch4, z, risk, decision)
+
+        if "HSE_EMAIL" in st.secrets:
+            send_email_alert(
+                st.secrets["HSE_EMAIL"],
+                f"ALERTE CH₄ CRITIQUE {selected_site}",
+                f"CH4={ch4:.1f} ppb, Z={z:.2f}, Action={decision}"
+            )
+        else:
+            st.warning("⚠️ Email HSE non configuré – alerte non envoyée")
+
     elif z > 2:
         risk, decision, color = "Anomalie", "Inspection terrain requise", "orange"
     else:
@@ -246,13 +264,70 @@ if st.session_state.analysis_done:
     folium.Circle([lat_site, lon_site], 3500, color=r["color"], fill=True).add_to(m)
     folium.Marker([lat_site, lon_site], tooltip=selected_site).add_to(m)
     st_folium(m, width=750, height=450)
+# ===================== NOUVELLES TORCHES =====================
+flares = get_active_flares(lat_site, lon_site)
 
-    # Attribution des torches
+def display_flares(fc, fmap):
+    def cb(fc_json):
+        n_flares = len(fc_json["features"])
+        if n_flares > 0:
+            source = "Torches détectées"
+            icon = "🔥"
+        else:
+            source = "Aucune torche détectée"
+            icon = "❓"
+
+        st.markdown(f"### {icon} Attribution de la source")
+        st.info(f"{source} — Nombre : {n_flares}")
+
+        # Ajouter les torches sur la carte
+        for f in fc_json["features"]:
+            lon_f, lat_f = f["geometry"]["coordinates"]
+            folium.Marker(
+                location=[lat_f, lat_f],
+                icon=folium.Icon(color="red", icon="fire"),
+                tooltip="Torche détectée (VIIRS)"
+            ).add_to(fmap)
+
+        # Afficher la carte mise à jour
+        st_folium(fmap, width=750, height=450)
+
+        # Mise à jour de la décision HSE
+        if st.session_state.analysis_done:
+            r = st.session_state.results
+            if r["z"] > 2 and n_flares > 0:
+                r["decision"] = "Élévation CH₄ probablement liée aux torches"
+            elif r["z"] > 2 and n_flares == 0:
+                r["decision"] = "Élévation CH₄ NON expliquée par les torches – suspicion fuite"
+
+    fc.evaluate(cb)
+
+# Appeler la fonction pour afficher les torches
+display_flares(flares, m)
+
+    # ===================== SOURCES D'ÉMISSION =====================
     flare_info = attribute_ch4_source(lat_site, lon_site)
     st.markdown(f"### {flare_info['icon']} Attribution de la source")
     st.info(f"{flare_info['source']} — Nombre : {flare_info['n_flares']}")
 
-    # Décision automatique
+    flares = flare_info["flares"]
+
+    def add_flares_to_map(fc, fmap):
+        def cb(fc_json):
+            features = fc_json["features"]
+            for f in features:
+                lon_f, lat_f = f["geometry"]["coordinates"]
+                folium.Marker(
+                    location=[lat_f, lon_f],
+                    icon=folium.Icon(color="red", icon="fire"),
+                    tooltip="Torche détectée (VIIRS)"
+                ).add_to(fmap)
+            st_folium(fmap, width=750, height=450)
+        fc.evaluate(cb)
+
+    add_flares_to_map(flares, m)
+
+    # ===================== DÉCISION AUTOMATIQUE =====================
     if r["z"] > 2 and flare_info["n_flares"] > 0:
         r["decision"] = "Élévation CH₄ probablement liée aux torches"
     elif r["z"] > 2 and flare_info["n_flares"] == 0:
@@ -294,6 +369,7 @@ if st.session_state.analysis_done:
         marker=dict(color="red", size=12),
         name="Analyse du jour"
     )
+
 st.plotly_chart(fig, use_container_width=True)
 
 # ===================== ASSISTANT IA =====================
