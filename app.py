@@ -30,17 +30,9 @@ st.info(
 
 # ===================== GEE INIT =====================
 try:
-    ee_key_json = json.loads(st.secrets["EE_KEY_JSON"])
-    with tempfile.NamedTemporaryFile(mode="w+", delete=False) as f:
-        json.dump(ee_key_json, f)
-        key_path = f.name
-
-    credentials = ee.ServiceAccountCredentials(
-        ee_key_json["client_email"], key_path
-    )
+    key_path = "methane-ai-hse-a85cc13c510a.json"  # JSON local
+    credentials = ee.ServiceAccountCredentials(None, key_file=key_path)
     ee.Initialize(credentials)
-    os.remove(key_path)
-
 except Exception as e:
     st.error(f"Erreur Google Earth Engine : {e}")
     st.stop()
@@ -60,7 +52,7 @@ selected_site = st.sidebar.selectbox("Choisir le site pour analyse multi-sites",
 lat_site, lon_site = sites[selected_site]
 
 # ===================== HISTORICAL DATA =====================
-csv_hist = "data/2020_2024/CH4_HassiRmel_2020_2024.csv"
+csv_hist = "data/2020 2024/CH4_HassiRmel_2020_2024.csv"
 df_hist = pd.read_csv(csv_hist)
 
 def get_ch4_series(df):
@@ -88,13 +80,15 @@ def get_latest_ch4(lat, lon, days_back=90):
     )
     if col.size().getInfo() == 0:
         return None, None
-    img = col.first()
-    date_img = ee.Date(img.get("system:time_start")).format("YYYY-MM-dd").getInfo()
-    val = img.reduceRegion(
-        ee.Reducer.mean(), geom, 7000, maxPixels=1e9
-    ).getInfo().get("CH4_column_volume_mixing_ratio_dry_air")
-    if val:
-        return val * 1000, date_img
+    imgs = col.toList(col.size())
+    for i in range(col.size().getInfo()):
+        img = ee.Image(imgs.get(i))
+        date_img = ee.Date(img.get("system:time_start")).format("YYYY-MM-dd").getInfo()
+        val = img.reduceRegion(
+            ee.Reducer.mean(), geom, 7000, maxPixels=1e9
+        ).getInfo().get("CH4_column_volume_mixing_ratio_dry_air")
+        if val:
+            return val * 1000, date_img
     return None, None
 
 def detect_anomaly(value, series):
@@ -156,7 +150,7 @@ def generate_hse_pdf(results, site, lat, lon):
 def send_email_alert(to_email, subject, body):
     try:
         smtp_server = st.secrets["SMTP_SERVER"]
-        smtp_port = int(st.secrets["SMTP_PORT"])
+        smtp_port = st.secrets["SMTP_PORT"]
         smtp_user = st.secrets["SMTP_USER"]
         smtp_pass = st.secrets["SMTP_PASS"]
         msg = MIMEText(body)
@@ -169,7 +163,7 @@ def send_email_alert(to_email, subject, body):
     except Exception as e:
         st.warning(f"Impossible d'envoyer email: {e}")
 
-# ===================== GEE FLARES =====================
+# ===================== GEE Flares =====================
 def get_active_flares(lat, lon, days_back=7):
     geom = ee.Geometry.Point([lon, lat]).buffer(10000)
     end = ee.Date(datetime.utcnow().strftime("%Y-%m-%d"))
@@ -204,43 +198,26 @@ def attribute_ch4_source(lat, lon):
     flares.size().evaluate(cb)
     return result
 
-def add_flares_to_map(fc, fmap):
-    def cb(fc_json):
-        features = fc_json["features"]
-        for f in features:
-            lon_f, lat_f = f["geometry"]["coordinates"]
-            folium.Marker(
-                location=[lat_f, lon_f],
-                icon=folium.Icon(color="red", icon="fire"),
-                tooltip="Torche détectée (VIIRS)"
-            ).add_to(fmap)
-        st_folium(fmap, width=750, height=450)
-    fc.evaluate(cb)
-
 # ===================== ANALYSIS =====================
 if st.button("🚀 Lancer l’analyse"):
     ch4, date_img = get_latest_ch4(lat_site, lon_site)
     series = get_ch4_series(df_hist)
+
     if ch4 is None:
         st.warning("Donnée satellite indisponible – utilisation CSV")
         ch4 = series.iloc[-1]
         date_img = "Historique CSV"
+
     z = detect_anomaly(ch4, series)
+
     if z > 3:
         risk, decision, color = "Critique", "Alerte HSE immédiate", "red"
         log_hse_alert(selected_site, lat_site, lon_site, ch4, z, risk, decision)
-        if "HSE_EMAIL" in st.secrets:
-            send_email_alert(
-                st.secrets["HSE_EMAIL"],
-                f"ALERTE CH₄ CRITIQUE {selected_site}",
-                f"CH4={ch4:.1f} ppb, Z={z:.2f}, Action={decision}"
-            )
-        else:
-            st.warning("⚠️ Email HSE non configuré – alerte non envoyée")
     elif z > 2:
         risk, decision, color = "Anomalie", "Inspection terrain requise", "orange"
     else:
         risk, decision, color = "Normal", "Surveillance continue", "green"
+
     st.session_state.analysis_done = True
     st.session_state.results = {
         "ch4": ch4,
@@ -270,12 +247,12 @@ if st.session_state.analysis_done:
     folium.Marker([lat_site, lon_site], tooltip=selected_site).add_to(m)
     st_folium(m, width=750, height=450)
 
+    # Attribution des torches
     flare_info = attribute_ch4_source(lat_site, lon_site)
     st.markdown(f"### {flare_info['icon']} Attribution de la source")
     st.info(f"{flare_info['source']} — Nombre : {flare_info['n_flares']}")
-    flares = flare_info["flares"]
-    add_flares_to_map(flares, m)
 
+    # Décision automatique
     if r["z"] > 2 and flare_info["n_flares"] > 0:
         r["decision"] = "Élévation CH₄ probablement liée aux torches"
     elif r["z"] > 2 and flare_info["n_flares"] == 0:
@@ -291,12 +268,10 @@ st.markdown("## 📋 Historique des alertes HSE")
 if os.path.exists("alerts_hse.csv"):
     df_alerts = pd.read_csv("alerts_hse.csv")
     st.dataframe(df_alerts, use_container_width=True)
-    st.download_button(
-        "⬇️ Télécharger le journal des alertes",
-        df_alerts.to_csv(index=False),
-        file_name="alerts_hse.csv",
-        mime="text/csv"
-    )
+    st.download_button("⬇️ Télécharger le journal des alertes",
+                       df_alerts.to_csv(index=False),
+                       file_name="alerts_hse.csv",
+                       mime="text/csv")
 else:
     st.info("Aucune alerte critique enregistrée.")
 
@@ -308,11 +283,8 @@ df_hist_plot["CH4_ppb"] = ch4_series
 df_hist_plot["date"] = pd.to_datetime(df_hist_plot.iloc[:,0])
 fig = px.line(df_hist_plot, x="date", y="CH4_ppb", title=f"Évolution CH₄ – {selected_site}")
 fig.add_hline(y=ch4_series.mean(), line_dash="dash", line_color="green", annotation_text="Moyenne")
-fig.add_hrect(
-    y0=ch4_series.mean()-2*ch4_series.std(),
-    y1=ch4_series.mean()+2*ch4_series.std(),
-    fillcolor="lightgreen", opacity=0.2, line_width=0
-)
+fig.add_hrect(y0=ch4_series.mean()-2*ch4_series.std(), y1=ch4_series.mean()+2*ch4_series.std(),
+              fillcolor="lightgreen", opacity=0.2, line_width=0)
 if st.session_state.analysis_done:
     r = st.session_state.results
     fig.add_scatter(
