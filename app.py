@@ -1,22 +1,24 @@
+import streamlit as st
 import ee
 import tempfile
+import json
 import os
-import streamlit as st
 
 try:
-    ee_key_json = st.secrets["EE_KEY_JSON"]  # récupéré directement comme dict
-
-    # Crée un fichier temporaire avec la clé pour EE
+    ee_key_json = st.secrets["EE_KEY_JSON"]  # déjà un dict
+    # Crée un fichier temporaire avec la clé
     with tempfile.NamedTemporaryFile(mode="w+", delete=False) as f:
-        import json
         json.dump(ee_key_json, f)
         key_path = f.name
 
     # Initialise GEE
     credentials = ee.ServiceAccountCredentials(
-        ee_key_json["client_email"], key_path
+        ee_key_json["client_email"],
+        key_path
     )
     ee.Initialize(credentials)
+
+    # Supprime le fichier temporaire
     os.remove(key_path)
     st.success("✅ Google Earth Engine initialisé correctement")
 
