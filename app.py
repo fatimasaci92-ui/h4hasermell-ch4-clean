@@ -305,8 +305,11 @@ def display_flares(fc, fmap):
 # Appeler la fonction pour afficher les torches
 display_flares(flares, m)
 
-    # ===================== SOURCES D'ÉMISSION =====================
-    flare_info = attribute_ch4_source(lat_site, lon_site)
+# ===================== SOURCES D'ÉMISSION =====================
+flare_info = attribute_ch4_source(lat_site, lon_site)
+st.markdown(f"### {flare_info['icon']} Attribution de la source")
+st.info(f"{flare_info['source']} — Nombre : {flare_info['n_flares']}")
+
     st.markdown(f"### {flare_info['icon']} Attribution de la source")
     st.info(f"{flare_info['source']} — Nombre : {flare_info['n_flares']}")
 
